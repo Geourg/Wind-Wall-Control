@@ -1,0 +1,137 @@
+import tkinter as tk
+from tkinter import ttk
+import socket
+
+# 16 fans (4x4 grid)
+NUM_FANS = 16
+
+# Initialize socket connection
+sock = None
+
+ESP32_IP = '192.168.4.1'
+ESP32_PORT = 3333
+
+def connect_to_esp32():
+    global sock
+    if sock:
+        try:
+            sock.close()
+            print("Closed existing socket connection.")
+        except Exception as e:
+            print(f"Error closing socket: {e}")
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(3)
+        sock.connect((ESP32_IP, ESP32_PORT))
+        connection_status_label.config(text=f"Connected to {ESP32_IP}", fg="green")
+        print(f"Connected to {ESP32_IP}:{ESP32_PORT}")
+    except Exception as e:
+        print(f"Failed to connect to {ESP32_IP}:{ESP32_PORT} -> {e}")
+        connection_status_label.config(text="Connection Failed", fg="red")
+
+def send_rpm_to_esp32(rpm_list):
+    if sock:
+        try:
+            message = ','.join(map(str, rpm_list)) + '\n'
+            sock.sendall(message.encode('utf-8'))
+        except Exception as e:
+            print(f"Failed to send data: {e}")
+
+def update_color_and_send():
+    rpm_list = []
+    for i in range(NUM_FANS):
+        try:
+            new_rpm = int(rpm_entries[i].get())
+            new_rpm = max(0, min(new_rpm, 100))
+        except ValueError:
+            new_rpm = 0
+            rpm_entries[i].delete(0, tk.END)
+            rpm_entries[i].insert(0, "0")
+
+        if new_rpm <= 50:
+            red_value = 255
+            green_value = int(255 * (1 - (new_rpm / 50)))
+            blue_value = 0
+        else:
+            red_value = int(255 - (new_rpm - 50) * (127 / 50))
+            green_value = 0
+            blue_value = int((new_rpm - 50) * (128 / 50))
+
+        color_hex = "#{:02X}{:02X}{:02X}".format(red_value, green_value, blue_value)
+        fan_labels[i].config(text=f"Fan {i+1}\nRPM: {new_rpm}")
+        fan_labels[i].configure(background=color_hex)
+
+        rpm_list.append(new_rpm)
+
+    send_rpm_to_esp32(rpm_list)
+
+def set_fan_preset():
+    preset_values = [100] * NUM_FANS
+    for i in range(NUM_FANS):
+        rpm_entries[i].delete(0, tk.END)
+        rpm_entries[i].insert(0, str(preset_values[i]))
+    update_color_and_send()
+
+def set_zeros_preset():
+    for i in range(NUM_FANS):
+        rpm_entries[i].delete(0, tk.END)
+        rpm_entries[i].insert(0, "0")
+    update_color_and_send()
+
+def update_connection_status():
+    global sock
+    if sock:
+        try:
+            sock.sendall(b'')
+            connection_status_label.config(text="Connected", fg="green")
+        except Exception as e:
+            connection_status_label.config(text="Disconnected", fg="red")
+    else:
+        connection_status_label.config(text="Disconnected", fg="red")
+    window.after(1000, update_connection_status)
+
+# GUI Setup
+window = tk.Tk()
+window.title("Wind Wall GUI - 4x4 Fans")
+window.geometry("800x800")
+
+connection_status_label = tk.Label(window, text="Disconnected", fg="red", font=("Helvetica", 12))
+connection_status_label.grid(row=0, column=0, columnspan=4, pady=10)
+
+fan_labels = []
+rpm_entries = []
+
+# 4x4 Grid
+for i in range(4):
+    window.grid_rowconfigure(i, weight=1)
+    for j in range(4):
+        window.grid_columnconfigure(j, weight=1)
+        fan_id = i * 4 + j
+        fan_frame = tk.Frame(window, width=150, height=150, bd=2, relief="solid")
+        fan_frame.grid(row=i + 1, column=j, padx=5, pady=5, sticky='nsew')
+
+        label = tk.Label(fan_frame, text=f"Fan {fan_id+1}\nRPM: 0", bg="#FFFF00", width=10)
+        label.pack(fill="both", expand=True)
+        fan_labels.append(label)
+
+        rpm_entry = tk.Entry(fan_frame, width=5, justify='center', bg="white")
+        rpm_entry.insert(0, "0")
+        rpm_entry.pack(pady=(5, 0))
+        rpm_entries.append(rpm_entry)
+
+# Buttons
+connect_button = ttk.Button(window, text="Connect to ESP32", command=connect_to_esp32)
+connect_button.grid(row=5, column=0, padx=10, pady=10, columnspan=4)
+
+update_button = ttk.Button(window, text="Update RPM", command=update_color_and_send)
+update_button.grid(row=6, column=0, padx=10, pady=10, columnspan=4)
+
+preset_button = ttk.Button(window, text="Apply Fan Preset", command=set_fan_preset)
+preset_button.grid(row=7, column=0, padx=10, pady=10, columnspan=4)
+
+zeros_button = ttk.Button(window, text="All Off", command=set_zeros_preset)
+zeros_button.grid(row=8, column=0, padx=10, pady=10, columnspan=4)
+
+update_connection_status()
+window.mainloop()
